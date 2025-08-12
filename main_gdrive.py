@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
-from pydrive.auth import GoogleAuth
-from pydrive.drive import GoogleDrive
+from pydrive2.auth import GoogleAuth
+from pydrive2.drive import GoogleDrive
 import json
 
 # --- Page setup ---
@@ -26,22 +26,22 @@ st.markdown("""
             text-align: center; 
             margin-bottom: 20px;">
     <h1 style="font-size: 28px; margin-bottom: 8px;">📈 Buyer Feedback Sentiment Analysis</h1>
-    <p style="font-size: 16px; opacity: 0.9;">Analyze customer sentiment from uploaded feedback data</p>
+    <p style="font-size: 16px; opacity: 0.9;">Analyze customer sentiment from selected feedback data</p>
 </div>
 """, unsafe_allow_html=True)
 
 # --- Google Drive Auth and file listing ---
 @st.cache_resource
 def authenticate_drive():
-    # Load service account info JSON from Streamlit secrets
-    service_account_info = json.loads(st.secrets["gcp_service_account"]["json"])
-
     gauth = GoogleAuth()
-    # Configure PyDrive settings manually using service account info
-    gauth.settings['client_config_backend'] = 'service'
-    gauth.settings['client_config'] = service_account_info
-    gauth.ServiceAuth()  # Use service account auth without browser
-
+    
+    # Load service account info from Streamlit secrets
+    service_account_info = json.loads(st.secrets["gcp_service_account"]["json"])
+    
+    gauth.auth_method = "service"
+    gauth.service_account_json = service_account_info
+    gauth.Authorize()
+    
     drive = GoogleDrive(gauth)
     return drive
 
@@ -127,3 +127,5 @@ if selected_file_name:
                     st.dataframe(df_filtered, use_container_width=True)
         else:
             st.warning("No 'reason' or 'reason2' column found.")
+else:
+    st.info("Please upload a CSV file to get started.")
