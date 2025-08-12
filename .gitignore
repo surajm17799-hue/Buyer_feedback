@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+env/
+venv/
+.env
+
+# Local secrets & service account
+service_account.json
+credentials.json
+sa.json
+token.json
+settings.yaml
+
+# Streamlit cache
+.streamlit/
+
+# OS
+.DS_Store

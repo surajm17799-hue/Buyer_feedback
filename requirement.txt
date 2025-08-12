@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+openai
+pydantic
+pandas
+streamlit 
+google-api-python-client
+google-auth
+google-auth-httplib2
+
+
