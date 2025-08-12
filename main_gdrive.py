@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from pydrive2.auth import GoogleAuth
 from pydrive2.drive import GoogleDrive
+import tempfile
 import json
 
 # --- Page setup ---
@@ -30,28 +31,40 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# --- Google Drive Auth and file listing ---
+# --- Google Drive Auth ---
 @st.cache_resource
 def authenticate_drive():
     gauth = GoogleAuth()
     
-    # Load service account info from Streamlit secrets
-    service_account_info = json.loads(st.secrets["gcp_service_account"]["json"])
+    # Load service account JSON from Streamlit secrets
+    service_account_json_str = st.secrets["gcp_service_account"]["json"]
+    
+    # Write JSON to a temp file
+    with tempfile.NamedTemporaryFile(mode="w+", suffix=".json", delete=False) as temp_json:
+        temp_json.write(service_account_json_str)
+        temp_json_path = temp_json.name
     
     gauth.auth_method = "service"
-    gauth.service_account_json = service_account_info
+    gauth.service_account_json = temp_json_path
     gauth.Authorize()
     
-    drive = GoogleDrive(gauth)
-    return drive
+    return GoogleDrive(gauth)
 
+# Authenticate
 drive = authenticate_drive()
 
-# Replace with your Google Drive folder ID here:
+# --- Debug: List first 5 files to verify connection ---
+test_files = drive.ListFile({'maxResults': 5}).GetList()
+for f in test_files:
+    st.write(f"📄 {f['title']} — {f['id']}")
+
+# Replace with your Google Drive folder ID
 FOLDER_ID = "1iskRT5FQjaFiRWu_qe6AzDQ1mlyYtC6n"
 
 # List CSV files in folder
-file_list = drive.ListFile({'q': f"'{FOLDER_ID}' in parents and mimeType='text/csv' and trashed=false"}).GetList()
+file_list = drive.ListFile({
+    'q': f"'{FOLDER_ID}' in parents and mimeType='text/csv' and trashed=false"
+}).GetList()
 file_names = [f['title'] for f in file_list]
 
 if not file_names:
@@ -61,6 +74,7 @@ if not file_names:
 st.markdown("<div class='section-title'>📂 Select Source File from Google Drive</div>", unsafe_allow_html=True)
 selected_file_name = st.selectbox("Choose a file", file_names)
 
+# --- Detect source ---
 def detect_source(columns):
     cols = set(c.strip().lower() for c in columns)
     if {"source", "buyer", "comment", "reason"}.issubset(cols):
@@ -72,13 +86,14 @@ def detect_source(columns):
         return "seller_relevance"
     return "unknown"
 
+# --- Highlight negative ---
 def highlight_negative(row):
     if "sentiment" in row.index and str(row["sentiment"]).strip().lower() == "negative":
         return ["background-color: #ffcccc"] * len(row)
     return [""] * len(row)
 
 if selected_file_name:
-    # Get file ID and download the file content
+    # Get file ID and download
     file_id = next(f['id'] for f in file_list if f['title'] == selected_file_name)
     file_obj = drive.CreateFile({'id': file_id})
     file_obj.GetContentFile(selected_file_name)
@@ -95,7 +110,7 @@ if selected_file_name:
     else:
         st.success(f"Detected source type: **{source_type.replace('_', ' ').title()}**")
 
-        # Show Buyer Verbatims
+        # Buyer Verbatims
         st.markdown("<div class='section-title'>🗣 Buyer Verbatims</div>", unsafe_allow_html=True)
         comment_col = next((col for col in df.columns if "comment" in col.lower()), None)
         if comment_col:
@@ -103,12 +118,10 @@ if selected_file_name:
         else:
             st.warning("No 'comment' column found.")
 
-        # Select Category
-        reason_col = None
+        # Category selection
         if source_type in ["play_store", "seller_relevance"]:
-            reason_col = next((col for col in df.columns if "reason2" in col.lower()), None)
-            if not reason_col:
-                reason_col = next((col for col in df.columns if "reason" in col.lower()), None)
+            reason_col = next((col for col in df.columns if "reason2" in col.lower()), None) \
+                or next((col for col in df.columns if "reason" in col.lower()), None)
         else:
             reason_col = next((col for col in df.columns if "reason" in col.lower()), None)
 
