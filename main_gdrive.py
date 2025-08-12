@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from pydrive.auth import GoogleAuth
 from pydrive.drive import GoogleDrive
-import os
+import json
 
 # --- Page setup ---
 st.set_page_config(page_title="Buyer Feedback Sentiment Analysis", layout="wide", initial_sidebar_state="expanded")
@@ -33,28 +33,15 @@ st.markdown("""
 # --- Google Drive Auth and file listing ---
 @st.cache_resource
 def authenticate_drive():
+    # Load service account info JSON from Streamlit secrets
+    service_account_info = json.loads(st.secrets["gcp_service_account"]["json"])
+
     gauth = GoogleAuth()
-    gauth.LocalWebserverAuth()  # Will open a browser to authenticate
-    return GoogleDrive(gauth)
+    # Configure PyDrive settings manually using service account info
+    gauth.settings['client_config_backend'] = 'service'
+    gauth.settings['client_config'] = service_account_info
+    gauth.ServiceAuth()  # Use service account auth without browser
 
-
-    # Check if settings.yaml exists; if not, create minimal settings
-    if not os.path.exists("settings.yaml"):
-        with open("settings.yaml", "w") as f:
-            f.write("""
-client_config_backend: settings
-client_config:
-  client_id: YOUR_CLIENT_ID.apps.googleusercontent.com
-  client_secret: YOUR_CLIENT_SECRET
-save_credentials: True
-save_credentials_backend: file
-save_credentials_file: credentials.json
-get_refresh_token: True
-oauth_scope:
-  - https://www.googleapis.com/auth/drive.metadata.readonly
-  - https://www.googleapis.com/auth/drive.readonly
-        """)
-    gauth.LocalWebserverAuth()  # Opens browser for OAuth
     drive = GoogleDrive(gauth)
     return drive
 
