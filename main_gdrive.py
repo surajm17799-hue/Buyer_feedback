@@ -147,7 +147,7 @@ def detect_source(columns):
 
 source_type = detect_source(df.columns) if selected_source != "All" else "all"
 
- --- Category Selection ---
+# --- Category Selection ---
 reason_col = None
 if source_type in ["play_store", "seller_relevance"]:
     reason_col = next((col for col in df.columns if "reason2" in col.lower()), None)
@@ -198,6 +198,8 @@ if reason_col:
     # Filter dataframe if not "All"
     if selected_categories != "All":
         df = df[df[reason_col] == selected_categories]
+
+
 
 
 #     # Show all categories checkbox below
