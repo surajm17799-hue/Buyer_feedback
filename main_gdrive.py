@@ -5,7 +5,7 @@ from pydrive2.drive import GoogleDrive
 import os
 import json
 import tempfile
-
+from io import StringIO
 # --- Page setup ---
 st.set_page_config(page_title="Buyer Feedback Sentiment Analysis", layout="wide", initial_sidebar_state="expanded")
 
@@ -35,17 +35,25 @@ st.markdown("""
 # --- Google Drive Auth and file listing ---
 
 def authenticate_drive():
-    sa_info = dict(st.secrets["google_service_account"])
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".json") as temp:
-        json.dump(sa_info, temp)
-        temp_path = temp.name
+    # Get the service account info from Streamlit secrets
+    sa_info = st.secrets["google_service_account"]
+
+    # Convert dict to JSON string
+    sa_json = json.dumps(sa_info)
+
+    # Use StringIO to simulate a file
+    sa_file = StringIO(sa_json)
 
     gauth = GoogleAuth()
-    gauth.LoadServiceConfigFile(temp_path)
+    gauth.LoadServiceConfigFile(sa_file)  # works with file-like object
     gauth.ServiceAuth()
-    return GoogleDrive(gauth)
 
+    drive = GoogleDrive(gauth)
+    return drive
+
+# Create drive client
 drive = authenticate_drive()
+
 
 
 # Replace with your Google Drive folder ID here:
