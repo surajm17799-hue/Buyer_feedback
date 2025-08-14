@@ -35,17 +35,17 @@ st.markdown("""
 # --- Google Drive Auth and file listing ---
 
 def authenticate_drive():
-    # Get the service account info from Streamlit secrets
-    sa_info = st.secrets["google_service_account"]
+    # Convert AttrDict to regular dict
+    sa_info = dict(st.secrets["google_service_account"])
 
     # Convert dict to JSON string
     sa_json = json.dumps(sa_info)
 
-    # Use StringIO to simulate a file
+    # Use StringIO to simulate a file for PyDrive
     sa_file = StringIO(sa_json)
 
     gauth = GoogleAuth()
-    gauth.LoadServiceConfigFile(sa_file)  # works with file-like object
+    gauth.LoadServiceConfigFile(sa_file)
     gauth.ServiceAuth()
 
     drive = GoogleDrive(gauth)
@@ -53,7 +53,6 @@ def authenticate_drive():
 
 # Create drive client
 drive = authenticate_drive()
-
 
 
 # Replace with your Google Drive folder ID here:
