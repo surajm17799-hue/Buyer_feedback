@@ -35,28 +35,16 @@ st.markdown("""
 # --- Google Drive Auth and file listing ---
 
 def authenticate_drive():
-    """
-    Authenticate to Google Drive using service account credentials from Streamlit secrets.
-    Works on Streamlit Cloud without requiring manual OAuth.
-    """
-    # Ensure the secrets object is a proper dict
     sa_info = dict(st.secrets["google_service_account"])
-
-    # Write it to a temporary file (pydrive2 expects a JSON file path)
     with tempfile.NamedTemporaryFile(delete=False, suffix=".json") as temp:
-        json.dump(sa_info, temp)  # safer than dumps+encode
+        json.dump(sa_info, temp)
         temp_path = temp.name
 
-    # Authenticate using service account
     gauth = GoogleAuth()
     gauth.LoadServiceConfigFile(temp_path)
     gauth.ServiceAuth()
-
-    # Create and return a Google Drive client
     return GoogleDrive(gauth)
 
-
-# Create the drive client (no caching)
 drive = authenticate_drive()
 
 
