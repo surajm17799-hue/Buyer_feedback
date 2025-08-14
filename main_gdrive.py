@@ -147,7 +147,7 @@ def detect_source(columns):
 
 source_type = detect_source(df.columns) if selected_source != "All" else "all"
 
-# --- Category Selection ---
+ --- Category Selection ---
 reason_col = None
 if source_type in ["play_store", "seller_relevance"]:
     reason_col = next((col for col in df.columns if "reason2" in col.lower()), None)
@@ -158,6 +158,10 @@ else:
 
 if reason_col:
     unique_categories = sorted(df[reason_col].dropna().unique())
+    
+    # Add "All" option at the start
+    unique_categories = ["All"] + unique_categories
+
     st.markdown("<div class='section-title'>📂 Select Feedback Categories</div>", unsafe_allow_html=True)
 
     # Keep expansion state
@@ -165,11 +169,12 @@ if reason_col:
         st.session_state.show_more_cats = False
 
     if not st.session_state.show_more_cats:
-        # First 5 categories only
-        display_categories = unique_categories[:5]
+        # First 5 categories (plus "All")
+        display_categories = unique_categories[:6]  # 5 + "All"
         selected_categories = st.radio(
             "",
             display_categories,
+            index=0,  # Default to "All"
             horizontal=True,
             label_visibility="collapsed"
         )
@@ -182,12 +187,17 @@ if reason_col:
         selected_categories = st.radio(
             "",
             display_categories,
+            index=0,  # Default to "All"
             horizontal=True,
             label_visibility="collapsed"
         )
         if st.button("Show less"):
             st.session_state.show_more_cats = False
             st.rerun()
+
+    # Filter dataframe if not "All"
+    if selected_categories != "All":
+        df = df[df[reason_col] == selected_categories]
 
 
 #     # Show all categories checkbox below
