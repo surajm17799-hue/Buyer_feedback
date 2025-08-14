@@ -17,11 +17,38 @@ st.markdown("""
 .dataframe tbody tr:nth-child(odd) {background-color: #e6f2ff !important;}
 .dataframe tbody tr:nth-child(even) {background-color: #f2f8fc !important;}
 .dataframe th {background-color: #cce5ff !important; color: black;}
+
+/* Box style for radio buttons / tags */
+div[role='radiogroup'] > label {
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    padding: 8px 16px;
+    margin-right: 8px;
+    margin-bottom: 8px;
+    background-color: white;
+    cursor: pointer;
+}
+div[role='radiogroup'] > label:hover {
+    background-color: #f0f8ff;
+    border-color: #1d4ed8;
+}
+div[role='radiogroup'] > label[aria-checked="true"] {
+    background-color: #3b82f6 !important;
+    color: white !important;
+    border-color: #1e40af !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
 # --- Header ---
 st.markdown("""
+<style>
+/* Reduce space above main header */
+.css-18e3th9 {  /* Main Streamlit block */
+    padding-top: 1rem;  /* default is larger, reduce it */
+}
+</style>
+
 <div style="background: linear-gradient(99deg, #3b82f6, #3b82f6); 
             padding: 14px;
             border-radius: 8px; 
@@ -32,6 +59,7 @@ st.markdown("""
     <p style="font-size: 16px; opacity: 0.9;">Analyze customer sentiment from feedback data</p>
 </div>
 """, unsafe_allow_html=True)
+
 
 # --- Google Drive Auth and file listing ---
 def authenticate_drive():
@@ -65,9 +93,47 @@ if not file_names:
     st.error("No CSV files found in the Google Drive folder.")
     st.stop()
 
-st.markdown("<div class='section-title'>📂 Select Feedback Source </div>", unsafe_allow_html=True)
-selected_file_name = st.selectbox("Choose a file", file_names)
+# --- Feedback Source Selection ---
+st.markdown("<div class='section-title'>📂 Select Feedback Source</div>", unsafe_allow_html=True)
+feedback_sources = ["All", "Seller Relevance", "Play Store", "NPS", "App Internal"]
+selected_source = st.radio(
+    "",
+    feedback_sources,
+    index=0,
+    horizontal=True,
+    label_visibility="collapsed"
+)
 
+# --- Map feedback source to CSV files (exclude QTR files from merge) ---
+source_file_map = {
+    "Seller Relevance": [f for f in file_names if "seller" in f.lower() and "qtr" not in f.lower()],
+    "Play Store": [f for f in file_names if "play" in f.lower() and "qtr" not in f.lower()],
+    "NPS": [f for f in file_names if "nps" in f.lower() and "qtr" not in f.lower()],
+    "App Internal": [f for f in file_names if "internal" in f.lower() and "qtr" not in f.lower()],
+    "All": [f for f in file_names if "qtr" not in f.lower()]
+}
+filtered_files = source_file_map.get(selected_source, [])
+
+if not filtered_files:
+    st.error(f"No CSV files match the selected feedback source: {selected_source}")
+    st.stop()
+
+# --- Load CSVs ---
+dfs = []
+for file_name in filtered_files:
+    file_id = next(f['id'] for f in file_list if f['title'] == file_name)
+    file_obj = drive.CreateFile({'id': file_id})
+    file_obj.GetContentFile(file_name)
+    try:
+        df_temp = pd.read_csv(file_name, encoding="utf-8-sig", header=0)
+    except UnicodeDecodeError:
+        df_temp = pd.read_csv(file_name, encoding="ISO-8859-1", header=0)
+    dfs.append(df_temp)
+
+# Combine all files if multiple found, else take first
+df = pd.concat(dfs, ignore_index=True) if len(dfs) > 1 else dfs[0]
+
+# --- Detect Source Type ---
 def detect_source(columns):
     cols = set(c.strip().lower() for c in columns)
     if {"source", "buyer", "comment", "reason"}.issubset(cols):
@@ -79,58 +145,122 @@ def detect_source(columns):
         return "seller_relevance"
     return "unknown"
 
+source_type = detect_source(df.columns) if selected_source != "All" else "all"
+
+# --- Category Selection ---
+reason_col = None
+if source_type in ["play_store", "seller_relevance"]:
+    reason_col = next((col for col in df.columns if "reason2" in col.lower()), None)
+    if not reason_col:
+        reason_col = next((col for col in df.columns if "reason" in col.lower()), None)
+else:
+    reason_col = next((col for col in df.columns if "reason" in col.lower()), None)
+
+if reason_col:
+    unique_categories = sorted(df[reason_col].dropna().unique())
+    st.markdown("<div class='section-title'>📂 Select Feedback Categories</div>", unsafe_allow_html=True)
+
+    # Keep expansion state
+    if "show_more_cats" not in st.session_state:
+        st.session_state.show_more_cats = False
+
+    if not st.session_state.show_more_cats:
+        # First 5 categories only
+        display_categories = unique_categories[:5]
+        selected_categories = st.radio(
+            "",
+            display_categories,
+            horizontal=True,
+            label_visibility="collapsed"
+        )
+        if st.button("Show more categories"):
+            st.session_state.show_more_cats = True
+            st.rerun()
+    else:
+        # All categories shown
+        display_categories = unique_categories
+        selected_categories = st.radio(
+            "",
+            display_categories,
+            horizontal=True,
+            label_visibility="collapsed"
+        )
+        if st.button("Show less"):
+            st.session_state.show_more_cats = False
+            st.rerun()
+
+
+#     # Show all categories checkbox below
+#     show_all = st.checkbox("Show all categories", value=False)
+#     if show_all:
+#         selected_categories = st.radio(
+#             "",
+#             ["All"] + unique_categories,
+#             index=0,
+#             horizontal=True,
+#             label_visibility="collapsed"
+#         )
+# else:
+#     st.warning("No categories available for this feedback source.")
+#     selected_categories = "All"
+
+# --- Quarterly Data Section ---
+qtr_file_map = {
+    "NPS": "NPS_QTR",
+    "Seller Relevance": "Seller Relevance QTR",
+    "App Internal": "App Internal QTR",
+    "Play Store":"Play Store QTR"
+}
+if selected_source in qtr_file_map:
+    qtr_file_keyword = qtr_file_map[selected_source].lower()
+    qtr_file_name = next((f for f in file_names if qtr_file_keyword in f.lower()), None)
+
+    if qtr_file_name:
+        qtr_file_id = next(f['id'] for f in file_list if f['title'] == qtr_file_name)
+        qtr_file_obj = drive.CreateFile({'id': qtr_file_id})
+        qtr_file_obj.GetContentFile(qtr_file_name)
+        try:
+            df_qtr = pd.read_csv(qtr_file_name, encoding="utf-8-sig", header=0)
+        except UnicodeDecodeError:
+            df_qtr = pd.read_csv(qtr_file_name, encoding="ISO-8859-1", header=0)
+
+        styled_qtr = df_qtr.style.set_table_styles(
+            [{'selector': 'th', 'props': [('background-color', '#cce5ff'), ('color', 'black')]}]
+        )
+        st.markdown(f"<div class='section-title'> {selected_source} Quarterly Data</div>", unsafe_allow_html=True)
+        st.dataframe(styled_qtr, use_container_width=True)
+    else:
+        st.warning(f"{qtr_file_map[selected_source]} CSV not found in Google Drive folder.")
+
+# --- Filter Data for Feedback Entries ---
+if reason_col and selected_categories != "All":
+    df_filtered = df[df[reason_col] == selected_categories]
+else:
+    df_filtered = df
+
+# --- Feedback Entries Table ---
+# --- Feedback Entries Table ---
+st.markdown("<div class='section-title'>📋 Feedback Entries</div>", unsafe_allow_html=True)
+st.write(f"**{len(df_filtered)} records found** (sample records)")
+
 def highlight_negative(row):
     if "sentiment" in row.index and str(row["sentiment"]).strip().lower() == "negative":
         return ["background-color: #ffcccc"] * len(row)
     return [""] * len(row)
 
-if selected_file_name:
-    # Get file ID and download the file content
-    file_id = next(f['id'] for f in file_list if f['title'] == selected_file_name)
-    file_obj = drive.CreateFile({'id': file_id})
-    file_obj.GetContentFile(selected_file_name)
+df_sample = df_filtered.head(100)  # show only 100 rows
 
-    try:
-        df = pd.read_csv(selected_file_name, encoding="utf-8-sig", header=0)
-    except UnicodeDecodeError:
-        df = pd.read_csv(selected_file_name, encoding="ISO-8859-1", header=0)
+if "sentiment" in df_sample.columns:
+    st.dataframe(df_sample.style.apply(highlight_negative, axis=1), use_container_width=True)
+else:
+    st.dataframe(df_sample, use_container_width=True)
 
-    source_type = detect_source(df.columns)
 
-    if source_type == "unknown":
-        st.warning("Could not detect source type from CSV. Please check the column names.")
-    else:
-        st.success(f"Detected source type: **{source_type.replace('_', ' ').title()}**")
+# --- Buyer Verbatims Table ---
+st.markdown("<div class='section-title'>🗣 Buyer Verbatims</div>", unsafe_allow_html=True)
+comment_col = next((col for col in df.columns if "comment" in col.lower()), None)
+if comment_col:
+    st.dataframe(df_filtered[[comment_col]].dropna(), use_container_width=True)
+else:
+    st.warning("No 'comment' column found.")
 
-        # Show Buyer Verbatims
-        st.markdown("<div class='section-title'>🗣 Buyer Verbatims</div>", unsafe_allow_html=True)
-        comment_col = next((col for col in df.columns if "comment" in col.lower()), None)
-        if comment_col:
-            st.dataframe(df[[comment_col]].dropna().head(50), use_container_width=True)
-        else:
-            st.warning("No 'comment' column found.")
-
-        # Select Category
-        reason_col = None
-        if source_type in ["play_store", "seller_relevance"]:
-            reason_col = next((col for col in df.columns if "reason2" in col.lower()), None)
-            if not reason_col:
-                reason_col = next((col for col in df.columns if "reason" in col.lower()), None)
-        else:
-            reason_col = next((col for col in df.columns if "reason" in col.lower()), None)
-
-        if reason_col:
-            unique_categories = sorted(df[reason_col].dropna().unique())
-            selected_categories = st.multiselect("Select Feedback Categories", unique_categories)
-
-            if selected_categories:
-                df_filtered = df[df[reason_col].isin(selected_categories)]
-                st.markdown("<div class='section-title'>📋 Feedback Entries</div>", unsafe_allow_html=True)
-                st.write(f"**{len(df_filtered)} records found**")
-
-                if "sentiment" in df_filtered.columns:
-                    st.dataframe(df_filtered.style.apply(highlight_negative, axis=1), use_container_width=True)
-                else:
-                    st.dataframe(df_filtered, use_container_width=True)
-        else:
-            st.warning("No 'reason' or 'reason2' column found.")
