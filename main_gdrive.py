@@ -157,20 +157,21 @@ else:
     reason_col = next((col for col in df.columns if "reason" in col.lower()), None)
 
 if reason_col:
-    unique_categories = sorted(df[reason_col].dropna().unique())
-    
+    # Count records per category, sort by count desc
+    category_counts = df[reason_col].dropna().value_counts(ascending=False)
+    sorted_categories = category_counts.index.tolist()
+
     # Add "All" option at the start
-    unique_categories = ["All"] + unique_categories
+    unique_categories = ["All"] + sorted_categories
 
     st.markdown("<div class='section-title'>📂 Select Feedback Categories</div>", unsafe_allow_html=True)
 
-    # Keep expansion state
     if "show_more_cats" not in st.session_state:
         st.session_state.show_more_cats = False
 
     if not st.session_state.show_more_cats:
-        # First 5 categories (plus "All")
-        display_categories = unique_categories[:6]  # 5 + "All"
+        # Show top 5 categories + "All"
+        display_categories = ["All"] + sorted_categories[:5]
         selected_categories = st.radio(
             "",
             display_categories,
@@ -182,12 +183,12 @@ if reason_col:
             st.session_state.show_more_cats = True
             st.rerun()
     else:
-        # All categories shown
+        # Show all categories
         display_categories = unique_categories
         selected_categories = st.radio(
             "",
             display_categories,
-            index=0,  # Default to "All"
+            index=0,
             horizontal=True,
             label_visibility="collapsed"
         )
@@ -198,7 +199,6 @@ if reason_col:
     # Filter dataframe if not "All"
     if selected_categories != "All":
         df = df[df[reason_col] == selected_categories]
-
 
 
 
