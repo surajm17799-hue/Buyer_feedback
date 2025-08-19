@@ -141,6 +141,8 @@ for file_name in filtered_files:
 
 # Combine all files if multiple found, else take first
 df = pd.concat(dfs, ignore_index=True) if len(dfs) > 1 else dfs[0]
+if "rating" in df.columns:
+    df["rating"] = df["rating"].astype("Int64")  
 
 # --- Detect Source Type ---
 def detect_source(columns):
