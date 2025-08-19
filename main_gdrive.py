@@ -119,16 +119,25 @@ if not filtered_files:
     st.stop()
 
 # --- Load CSVs ---
+# --- Load CSVs with decimal-to-string fix for any *_id columns ---
 dfs = []
 for file_name in filtered_files:
     file_id = next(f['id'] for f in file_list if f['title'] == file_name)
     file_obj = drive.CreateFile({'id': file_id})
     file_obj.GetContentFile(file_name)
     try:
-        df_temp = pd.read_csv(file_name, encoding="utf-8-sig", header=0)
+        # Preview first 5 rows to detect *_id columns
+        preview_df = pd.read_csv(file_name, encoding="utf-8-sig", header=0, nrows=5)
+        id_cols = [c for c in preview_df.columns if "id" in c.lower()]
+        dtype_map = {col: str for col in id_cols}
+        df_temp = pd.read_csv(file_name, encoding="utf-8-sig", header=0, dtype=dtype_map if id_cols else None)
     except UnicodeDecodeError:
-        df_temp = pd.read_csv(file_name, encoding="ISO-8859-1", header=0)
+        preview_df = pd.read_csv(file_name, encoding="ISO-8859-1", header=0, nrows=5)
+        id_cols = [c for c in preview_df.columns if "id" in c.lower()]
+        dtype_map = {col: str for col in id_cols}
+        df_temp = pd.read_csv(file_name, encoding="ISO-8859-1", header=0, dtype=dtype_map if id_cols else None)
     dfs.append(df_temp)
+
 
 # Combine all files if multiple found, else take first
 df = pd.concat(dfs, ignore_index=True) if len(dfs) > 1 else dfs[0]
