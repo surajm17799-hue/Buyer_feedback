@@ -61,28 +61,16 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# --- Google Drive Auth and file listing ---
+# --- Google Drive Auth ---
+@st.cache_resource
 def authenticate_drive():
-    # Convert AttrDict to dict
-    sa_info = dict(st.secrets["google_service_account"])
-
-    # Create credentials directly from dict
-    scope = ['https://www.googleapis.com/auth/drive']
-    credentials = ServiceAccountCredentials.from_json_keyfile_dict(sa_info, scopes=scope)
-
-    # Authenticate with PyDrive
     gauth = GoogleAuth()
-    gauth.credentials = credentials
-    gauth.Authorize()  # Authorize the credentials
+    gauth.LocalWebserverAuth()
+    return GoogleDrive(gauth)
 
-    drive = GoogleDrive(gauth)
-    return drive
-
-# Create drive client
 drive = authenticate_drive()
 
-
-# Replace with your Google Drive folder ID here:
+# Google Drive folder ID
 FOLDER_ID = "1iskRT5FQjaFiRWu_qe6AzDQ1mlyYtC6n"
 
 # List CSV files in folder
@@ -118,15 +106,15 @@ if not filtered_files:
     st.error(f"No CSV files match the selected feedback source: {selected_source}")
     st.stop()
 
-# --- Load CSVs ---
-# --- Load CSVs with decimal-to-string fix for any *_id columns ---
+# --- Load CSVs (decimal fix for Seller Relevance) ---
+# --- Load CSVs (decimal fix for any *_id column in any source) ---
 dfs = []
 for file_name in filtered_files:
     file_id = next(f['id'] for f in file_list if f['title'] == file_name)
     file_obj = drive.CreateFile({'id': file_id})
     file_obj.GetContentFile(file_name)
     try:
-        # Preview first 5 rows to detect *_id columns
+        # Detect id columns dynamically for every file
         preview_df = pd.read_csv(file_name, encoding="utf-8-sig", header=0, nrows=5)
         id_cols = [c for c in preview_df.columns if "id" in c.lower()]
         dtype_map = {col: str for col in id_cols}
@@ -141,8 +129,9 @@ for file_name in filtered_files:
 
 # Combine all files if multiple found, else take first
 df = pd.concat(dfs, ignore_index=True) if len(dfs) > 1 else dfs[0]
+
 if "rating" in df.columns:
-    df["rating"] = df["rating"].astype("Int64")  
+    df["rating"] = df["rating"].astype("Int64")
 
 # --- Detect Source Type ---
 def detect_source(columns):
@@ -211,28 +200,12 @@ if reason_col:
     if selected_categories != "All":
         df = df[df[reason_col] == selected_categories]
 
-
-
-#     # Show all categories checkbox below
-#     show_all = st.checkbox("Show all categories", value=False)
-#     if show_all:
-#         selected_categories = st.radio(
-#             "",
-#             ["All"] + unique_categories,
-#             index=0,
-#             horizontal=True,
-#             label_visibility="collapsed"
-#         )
-# else:
-#     st.warning("No categories available for this feedback source.")
-#     selected_categories = "All"
-
 # --- Quarterly Data Section ---
 qtr_file_map = {
     "NPS": "NPS_QTR",
     "Seller Relevance": "Seller Relevance QTR",
     "App Internal": "App Internal QTR",
-    "Play Store":"Play Store QTR"
+    "Play Store": "Play Store QTR"
 }
 if selected_source in qtr_file_map:
     qtr_file_keyword = qtr_file_map[selected_source].lower()
@@ -262,7 +235,6 @@ else:
     df_filtered = df
 
 # --- Feedback Entries Table ---
-# --- Feedback Entries Table ---
 st.markdown("<div class='section-title'>📋 Feedback Entries</div>", unsafe_allow_html=True)
 st.write(f"**{len(df_filtered)} records found** (sample records)")
 
@@ -278,12 +250,10 @@ if "sentiment" in df_sample.columns:
 else:
     st.dataframe(df_sample, use_container_width=True)
 
-
 # --- Buyer Verbatims Table ---
 st.markdown("<div class='section-title'>🗣 Buyer Verbatims</div>", unsafe_allow_html=True)
 comment_col = next((col for col in df.columns if "comment" in col.lower()), None)
 if comment_col:
-    st.dataframe(df_filtered[[comment_col]].dropna(), use_container_width=True)
+    st.dataframe(df_filtered[[comment_col]].dropna().drop_duplicates(), use_container_width=True)
 else:
     st.warning("No 'comment' column found.")
-
