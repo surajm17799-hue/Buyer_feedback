@@ -1,11 +1,8 @@
 import streamlit as st
 import pandas as pd
-from pydrive2.auth import GoogleAuth
-from pydrive2.drive import GoogleDrive
-import os
-import json
-import tempfile
-from oauth2client.service_account import ServiceAccountCredentials
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from io import BytesIO
 
 # --- Page setup ---
 st.set_page_config(page_title="Buyer Feedback Sentiment Analysis", layout="wide", initial_sidebar_state="expanded")
@@ -17,24 +14,16 @@ st.markdown("""
 .dataframe tbody tr:nth-child(odd) {background-color: #e6f2ff !important;}
 .dataframe tbody tr:nth-child(even) {background-color: #f2f8fc !important;}
 .dataframe th {background-color: #cce5ff !important; color: black;}
-
-/* Box style for radio buttons / tags */
 div[role='radiogroup'] > label {
-    border: 1px solid #ccc;
-    border-radius: 6px;
-    padding: 8px 16px;
-    margin-right: 8px;
-    margin-bottom: 8px;
-    background-color: white;
-    cursor: pointer;
+    border: 1px solid #ccc; border-radius: 6px;
+    padding: 8px 16px; margin-right: 8px; margin-bottom: 8px;
+    background-color: white; cursor: pointer;
 }
 div[role='radiogroup'] > label:hover {
-    background-color: #f0f8ff;
-    border-color: #1d4ed8;
+    background-color: #f0f8ff; border-color: #1d4ed8;
 }
 div[role='radiogroup'] > label[aria-checked="true"] {
-    background-color: #3b82f6 !important;
-    color: white !important;
+    background-color: #3b82f6 !important; color: white !important;
     border-color: #1e40af !important;
 }
 </style>
@@ -43,39 +32,41 @@ div[role='radiogroup'] > label[aria-checked="true"] {
 # --- Header ---
 st.markdown("""
 <style>
-/* Reduce space above main header */
-.css-18e3th9 {  /* Main Streamlit block */
-    padding-top: 1rem;  /* default is larger, reduce it */
-}
+.css-18e3th9 { padding-top: 1rem; }
 </style>
-
 <div style="background: linear-gradient(99deg, #3b82f6, #3b82f6); 
-            padding: 14px;
-            border-radius: 8px; 
-            color: #ffffff; 
-            text-align: center; 
-            margin-bottom: 20px;">
+            padding: 14px; border-radius: 8px; 
+            color: #ffffff; text-align: center; margin-bottom: 20px;">
     <h1 style="font-size: 28px; margin-bottom: 8px;">📈 Buyer Feedback Sentiment Analysis</h1>
     <p style="font-size: 16px; opacity: 0.9;">Analyze customer sentiment from feedback data</p>
 </div>
 """, unsafe_allow_html=True)
 
-
-# --- Google Drive Auth ---
+# --- Google Drive Auth (Service Account) ---
 @st.cache_resource
 def authenticate_drive():
-    gauth = GoogleAuth()
-    gauth.LocalWebserverAuth()
-    return GoogleDrive(gauth)
+    SCOPES = [
+        "https://www.googleapis.com/auth/drive.metadata.readonly",
+        "https://www.googleapis.com/auth/drive.readonly"
+    ]
+    creds = service_account.Credentials.from_service_account_info(
+        st.secrets["google_service_account"], scopes=SCOPES
+    )
+    return build("drive", "v3", credentials=creds)
 
-drive = authenticate_drive()
+drive_service = authenticate_drive()
 
 # Google Drive folder ID
 FOLDER_ID = "1iskRT5FQjaFiRWu_qe6AzDQ1mlyYtC6n"
 
-# List CSV files in folder
-file_list = drive.ListFile({'q': f"'{FOLDER_ID}' in parents and mimeType='text/csv' and trashed=false"}).GetList()
-file_names = [f['title'] for f in file_list]
+# --- List CSV files in folder ---
+def list_csv_files(folder_id):
+    query = f"'{folder_id}' in parents and mimeType='text/csv' and trashed=false"
+    results = drive_service.files().list(q=query, fields="files(id, name)").execute()
+    return results.get("files", [])
+
+file_list = list_csv_files(FOLDER_ID)
+file_names = [f["name"] for f in file_list]
 
 if not file_names:
     st.error("No CSV files found in the Google Drive folder.")
@@ -84,15 +75,9 @@ if not file_names:
 # --- Feedback Source Selection ---
 st.markdown("<div class='section-title'>📂 Select Feedback Source</div>", unsafe_allow_html=True)
 feedback_sources = ["All", "Seller Relevance", "Play Store", "NPS", "App Internal"]
-selected_source = st.radio(
-    "",
-    feedback_sources,
-    index=0,
-    horizontal=True,
-    label_visibility="collapsed"
-)
+selected_source = st.radio("", feedback_sources, index=0, horizontal=True, label_visibility="collapsed")
 
-# --- Map feedback source to CSV files (exclude QTR files from merge) ---
+# --- Map feedback source to CSV files (exclude QTR files) ---
 source_file_map = {
     "Seller Relevance": [f for f in file_names if "seller" in f.lower() and "qtr" not in f.lower()],
     "Play Store": [f for f in file_names if "play" in f.lower() and "qtr" not in f.lower()],
@@ -106,28 +91,29 @@ if not filtered_files:
     st.error(f"No CSV files match the selected feedback source: {selected_source}")
     st.stop()
 
-# --- Load CSVs (decimal fix for Seller Relevance) ---
-# --- Load CSVs (decimal fix for any *_id column in any source) ---
+# --- Download CSV ---
+def download_csv(file_id):
+    request = drive_service.files().get_media(fileId=file_id)
+    file_data = request.execute()
+    return file_data
+
+# --- Load CSVs ---
 dfs = []
 for file_name in filtered_files:
-    file_id = next(f['id'] for f in file_list if f['title'] == file_name)
-    file_obj = drive.CreateFile({'id': file_id})
-    file_obj.GetContentFile(file_name)
+    file_id = next(f["id"] for f in file_list if f["name"] == file_name)
+    raw_data = download_csv(file_id)
     try:
-        # Detect id columns dynamically for every file
-        preview_df = pd.read_csv(file_name, encoding="utf-8-sig", header=0, nrows=5)
+        preview_df = pd.read_csv(BytesIO(raw_data), encoding="utf-8-sig", nrows=5)
         id_cols = [c for c in preview_df.columns if "id" in c.lower()]
         dtype_map = {col: str for col in id_cols}
-        df_temp = pd.read_csv(file_name, encoding="utf-8-sig", header=0, dtype=dtype_map if id_cols else None)
+        df_temp = pd.read_csv(BytesIO(raw_data), encoding="utf-8-sig", dtype=dtype_map if id_cols else None)
     except UnicodeDecodeError:
-        preview_df = pd.read_csv(file_name, encoding="ISO-8859-1", header=0, nrows=5)
+        preview_df = pd.read_csv(BytesIO(raw_data), encoding="ISO-8859-1", nrows=5)
         id_cols = [c for c in preview_df.columns if "id" in c.lower()]
         dtype_map = {col: str for col in id_cols}
-        df_temp = pd.read_csv(file_name, encoding="ISO-8859-1", header=0, dtype=dtype_map if id_cols else None)
+        df_temp = pd.read_csv(BytesIO(raw_data), encoding="ISO-8859-1", dtype=dtype_map if id_cols else None)
     dfs.append(df_temp)
 
-
-# Combine all files if multiple found, else take first
 df = pd.concat(dfs, ignore_index=True) if len(dfs) > 1 else dfs[0]
 
 if "rating" in df.columns:
@@ -157,46 +143,27 @@ else:
     reason_col = next((col for col in df.columns if "reason" in col.lower()), None)
 
 if reason_col:
-    # Count records per category, sort by count desc
     category_counts = df[reason_col].dropna().value_counts(ascending=False)
     sorted_categories = category_counts.index.tolist()
-
-    # Add "All" option at the start
     unique_categories = ["All"] + sorted_categories
-
     st.markdown("<div class='section-title'>📂 Select Feedback Categories</div>", unsafe_allow_html=True)
 
     if "show_more_cats" not in st.session_state:
         st.session_state.show_more_cats = False
 
     if not st.session_state.show_more_cats:
-        # Show top 5 categories + "All"
         display_categories = ["All"] + sorted_categories[:5]
-        selected_categories = st.radio(
-            "",
-            display_categories,
-            index=0,  # Default to "All"
-            horizontal=True,
-            label_visibility="collapsed"
-        )
+        selected_categories = st.radio("", display_categories, index=0, horizontal=True, label_visibility="collapsed")
         if st.button("Show more categories"):
             st.session_state.show_more_cats = True
             st.rerun()
     else:
-        # Show all categories
         display_categories = unique_categories
-        selected_categories = st.radio(
-            "",
-            display_categories,
-            index=0,
-            horizontal=True,
-            label_visibility="collapsed"
-        )
+        selected_categories = st.radio("", display_categories, index=0, horizontal=True, label_visibility="collapsed")
         if st.button("Show less"):
             st.session_state.show_more_cats = False
             st.rerun()
 
-    # Filter dataframe if not "All"
     if selected_categories != "All":
         df = df[df[reason_col] == selected_categories]
 
@@ -210,15 +177,13 @@ qtr_file_map = {
 if selected_source in qtr_file_map:
     qtr_file_keyword = qtr_file_map[selected_source].lower()
     qtr_file_name = next((f for f in file_names if qtr_file_keyword in f.lower()), None)
-
     if qtr_file_name:
-        qtr_file_id = next(f['id'] for f in file_list if f['title'] == qtr_file_name)
-        qtr_file_obj = drive.CreateFile({'id': qtr_file_id})
-        qtr_file_obj.GetContentFile(qtr_file_name)
+        qtr_file_id = next(f["id"] for f in file_list if f["name"] == qtr_file_name)
+        qtr_data = download_csv(qtr_file_id)
         try:
-            df_qtr = pd.read_csv(qtr_file_name, encoding="utf-8-sig", header=0)
+            df_qtr = pd.read_csv(BytesIO(qtr_data), encoding="utf-8-sig")
         except UnicodeDecodeError:
-            df_qtr = pd.read_csv(qtr_file_name, encoding="ISO-8859-1", header=0)
+            df_qtr = pd.read_csv(BytesIO(qtr_data), encoding="ISO-8859-1")
 
         styled_qtr = df_qtr.style.set_table_styles(
             [{'selector': 'th', 'props': [('background-color', '#cce5ff'), ('color', 'black')]}]
@@ -228,23 +193,16 @@ if selected_source in qtr_file_map:
     else:
         st.warning(f"{qtr_file_map[selected_source]} CSV not found in Google Drive folder.")
 
-# --- Filter Data for Feedback Entries ---
-if reason_col and selected_categories != "All":
-    df_filtered = df[df[reason_col] == selected_categories]
-else:
-    df_filtered = df
-
 # --- Feedback Entries Table ---
 st.markdown("<div class='section-title'>📋 Feedback Entries</div>", unsafe_allow_html=True)
-st.write(f"**{len(df_filtered)} records found** (sample records)")
+st.write(f"**{len(df)} records found** (sample records)")
 
 def highlight_negative(row):
     if "sentiment" in row.index and str(row["sentiment"]).strip().lower() == "negative":
         return ["background-color: #ffcccc"] * len(row)
     return [""] * len(row)
 
-df_sample = df_filtered.head(100)  # show only 100 rows
-
+df_sample = df.head(100)
 if "sentiment" in df_sample.columns:
     st.dataframe(df_sample.style.apply(highlight_negative, axis=1), use_container_width=True)
 else:
@@ -254,6 +212,6 @@ else:
 st.markdown("<div class='section-title'>🗣 Buyer Verbatims</div>", unsafe_allow_html=True)
 comment_col = next((col for col in df.columns if "comment" in col.lower()), None)
 if comment_col:
-    st.dataframe(df_filtered[[comment_col]].dropna().drop_duplicates(), use_container_width=True)
+    st.dataframe(df[[comment_col]].dropna().drop_duplicates(), use_container_width=True)
 else:
     st.warning("No 'comment' column found.")
